@@ -64,7 +64,7 @@ print('loading twitter completed')
 
 from sentence_transformers import SentenceTransformer, util
 import torch
-
+# loading sentence transformer MinLM model fine tuned on a large dataset
 embedder = SentenceTransformer('all-MiniLM-L6-v2')
 
 corpus = list(full_data['text'])
