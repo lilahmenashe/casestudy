@@ -1,35 +1,27 @@
-import os
-import csv
-import json
+import string
+import stringprep
+
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 import nltk
 from nltk.tokenize import word_tokenize
-
+from nltk.corpus import stopwords
+import re
 
 # downloading nltk stopwords list & punkt tokenizer models
 nltk.download('stopwords')
 nltk.download('punkt')
 
-
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.feature_extraction.text import TfidfTransformer
-from nltk.corpus import stopwords
-import re
-stopWords = stopwords.words('english')
-
-# This function takes the string input, clean it and returns as the clean version
+# Data cleaning and pre-processing
+# function to preprocess input data and transform it into a suitable format for further semantic search implementation.
 def preprocess(text):
-    # removes extra lines
-    from nltk.tokenize import word_tokenize
+    # tokenization of sentence into words
     text_tokens = word_tokenize(text)
 
     # removes stop words
-    tokens_without_sw = [word for word in text_tokens if not word in stopwords.words()]
-    processed_text = (" ").join(tokens_without_sw)
+    tokens_without_sw = [word for word in text_tokens if not word in stopwords.words('english')]
+    processed_text = " ".join(tokens_without_sw)
 
-    # removes extra lines
+    # remove whitespace and newlines
     processed_text = " ".join(text.split())
 
     # remove urls using regular expression
@@ -37,101 +29,84 @@ def preprocess(text):
 
     # remove words with numbers
     processed_text = ''.join([i for i in processed_text if not i.isdigit()])
+
+    # remove punctuation
+    processed_text = processed_text.translate(str.maketrans('', '', string.punctuation))
+
+    # convert to lower case
+    processed_text = processed_text.lower()
     return processed_text
 
 
 df_reddit = pd.read_csv('reddit.csv')
 df_twitter = pd.read_csv("twitter.csv")
 
+# define the number of samples you'd like to use in the combined DataFrame
+num_samples = 3000
+
 # create a new dataframe by combining the two dataframes (df_reddit & df_twitter)
-num_samples = 100
-
 full_data = pd.DataFrame(columns=['text'])
-for idx, row in df_reddit.iterrows():
-    full_data = full_data.append({'text':preprocess(row['body'])},ignore_index=True)
+
+# I replaced iterrows with to_dic since it's much faster
+for row in df_reddit.to_dict('rows_iteration'):
+    full_data = full_data.append({'text': preprocess(row['body'])}, ignore_index=True)
 
     # remove this if statement to read the full dataset
     if len(full_data) > num_samples:
         break
-print('loading reddit completed')
-for idx, row in df_twitter.iterrows():
-    full_data = full_data.append({'text':preprocess(row['tweet'])},ignore_index=True)
+print('Loading....')
+
+for row in df_twitter.to_dict('rows_iteration'):
+    full_data = full_data.append({'text': preprocess(row['tweet'])}, ignore_index=True)
+
     # remove this if statement to read the full dataset
     if len(full_data) > num_samples:
         break
-print('loading twitter completed')
+print('Thanks for your patience!')
 
 
 from sentence_transformers import SentenceTransformer, util
 import torch
-# loading sentence transformer MinLM model fine tuned on a large dataset
-embedder = SentenceTransformer('all-MiniLM-L6-v2')
 
+# download the pre-trained sentence transformer.
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# provide the combined DataFrame to the model
 corpus = list(full_data['text'])
 unique_words = set()
 
-# build set with unique words
+# build list with unique words
 for sentence in corpus:
     for w in sentence.split():
         unique_words.add(w)
 corpus = list(unique_words)
 
-# compute corpus embedding
-corpus_embeddings = embedder.encode(corpus, convert_to_tensor=True)
-
-# Queries examples
-query = "iphone"
-
-# Find the closest 5 sentences of the corpus for each query sentence based on cosine similarity
-top_k = min(5, len(corpus))
-q_embedding = embedder.encode(query, convert_to_tensor=True)
-
-# use cosine-similarity between query embedding and corpus embedding
-cos_scores = util.cos_sim(q_embedding, corpus_embeddings)[0]
-
-# use torch.top_k to find the top 5 scores
-top_results = torch.topk(cos_scores, k=top_k)
-
-print("\nQuery:", query)
-print("Top %d most similar words in corpus:"%top_k)
-
-for score, idx in zip(top_results[0], top_results[1]):
-    print(corpus[idx], "(Score: {:.4f})".format(score))
+# The words stored in the corpus list are encoded by calling model.encode()
+corpus_embeddings = model.encode(corpus, convert_to_tensor=True)
 
 
-query = "coronavirus"
+def semantic_search(query):
+    # Find the closest 5 words of the corpus for each query sentence based on cosine similarity
+    top_k = min(5, len(corpus))
+    q_embedding = model.encode(query, convert_to_tensor=True)
 
-# Find the closest 5 sentences of the corpus for each query sentence based on cosine similarity
-top_k = min(5, len(corpus))
-q_embedding = embedder.encode(query, convert_to_tensor=True)
+    # We use cosine-similarity and torch.topk to find the highest 5 scores
+    cos_scores = util.cos_sim(q_embedding, corpus_embeddings)[0]
+    top_results = torch.topk(cos_scores, k=top_k)
 
-# use cosine-similarity between query embedding and corpus embedding
-cos_scores = util.cos_sim(q_embedding, corpus_embeddings)[0]
+    print("\nQuery:", query)
+    print("Top %d most similar words in corpus:"%top_k)
 
-# use torch.top_k to find the top 5 scores
-top_results = torch.topk(cos_scores, k=top_k)
+    for score, idx in zip(top_results[0], top_results[1]):
+        print(corpus[idx], "(Score: {:.4f})".format(score))
 
-print("\nQuery:", query)
-print("Top %d most similar words in corpus:"%top_k)
+    return semantic_search
 
-for score, idx in zip(top_results[0], top_results[1]):
-    print(corpus[idx], "(Score: {:.4f})".format(score))
 
-query = "Tesla"
+# Queries input from ths user
+while True:
+    query = input("\nPlease enter a query: ")
+    semantic_search(query)
 
-# Find the closest 5 sentences of the corpus for each query sentence based on cosine similarity
-top_k = min(5, len(corpus))
-q_embedding = embedder.encode(query, convert_to_tensor=True)
 
-# use cosine-similarity between query embedding and corpus embedding
-cos_scores = util.cos_sim(q_embedding, corpus_embeddings)[0]
-
-# use torch.top_k to find the top 5 scores
-top_results = torch.topk(cos_scores, k=top_k)
-
-print("\nQuery:", query)
-print("Top %d most similar words in corpus:"%top_k)
-
-for score, idx in zip(top_results[0], top_results[1]):
-    print(corpus[idx], "(Score: {:.4f})".format(score))
 
